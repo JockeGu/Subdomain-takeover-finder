@@ -7,6 +7,6 @@ which will be outputted into the terminal by default, optionally to a specified 
 - **email_scraper.py** -
 Scrapes email adresses of a tagert URL and outputs in the terminal.
 
-
+- **hasher.py** - Hashes strings with the chosen algorithm & hash_cracker.py does the reverse.
 
   
