@@ -1,6 +1,5 @@
 import argparse
 import requests
-import json
 import tldextract
 import urllib.parse
 import whois
@@ -15,6 +14,7 @@ print(f.renderText("Takeover?"))
 # Argument parser setup
 parser = argparse.ArgumentParser(description="Extract apex domains from crt.sh and verify with WHOIS.")
 parser.add_argument("organization", help="The organization name to query on crt.sh.")
+parser.add_argument("--scope", help="Comma-separated list of domains in scope.", required=False, default="")
 args = parser.parse_args()
 
 # Fetch JSON data from crt.sh
@@ -75,7 +75,7 @@ def whois_lookup(domain, org_name):
             print(f"✅ {domain} -> Verified (Org: {org}, Emails: {emails} NS: {name_servers})")
             return domain  # Return only verified domains
         else:
-            print(f"⚠️ {domain} -> WHOIS Org: {org} Emails: {emails} NS: {name_servers} (No match)")
+            print(f"⚠️  {domain} -> WHOIS Org: {org} Emails: {emails} NS: {name_servers} (No match)")
 
     except Exception as e:
         print(f"❌ WHOIS lookup failed for {domain}: {e}")
@@ -85,10 +85,15 @@ def whois_lookup(domain, org_name):
 # Parallel WHOIS verification
 def verify_domains_parallel(domains, org_name):
     verified = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         results = list(executor.map(lambda domain: whois_lookup(domain, org_name), domains))
 
     return [domain for domain in results if domain]  # Remove None values
+
+# Check for domains in scope
+def filter_scope(verified_domains, scope_domains):
+    return [domain for domain in verified_domains if domain in scope_domains]
+
 
 # Main execution
 data = fetch_domains(args.organization)
@@ -99,5 +104,11 @@ if data:
     
     print("\n🔍 Running WHOIS verification in parallel...\n")
     verified_domains = verify_domains_parallel(apex_domains, args.organization)
-    
-    print(f"\n✅ Verified {len(verified_domains)} domains belonging to '{args.organization}'.")
+
+    print(f"\n✅ Verified {len(verified_domains)}/{len(apex_domains)} domains belonging to '{args.organization}'.")
+
+    if args.scope:
+        scope_domains = [domain.strip().lower() for domain in args.scope.split(",")]
+        verified_domains = filter_scope(verified_domains, scope_domains)
+
+        print(f"\n🔹 After filtering, {len(verified_domains)} domain(s) are in scope.")
