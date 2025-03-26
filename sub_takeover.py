@@ -5,6 +5,8 @@ import urllib.parse
 import whois
 import time
 import concurrent.futures
+import subprocess
+import sys
 from pyfiglet import Figlet
 
 # Fancy title
@@ -16,11 +18,15 @@ parser = argparse.ArgumentParser(description="Extract apex domains from crt.sh o
 parser.add_argument("-o", "--organization", help="The organization name to query on crt.sh. (Required unless using -s/--scope-file)", required=False)
 parser.add_argument("-s", "--scope-file", help="Path to a file containing pre-verified domains (one per line).", required=False)
 parser.add_argument("-v", "--verbose", help="Enable detailed WHOIS output.", action="store_true")
+parser.add_argument("-S", "--sublister", help="Enable subdomain search with Sublist3r", action="store_true")
 args = parser.parse_args()
 
 # Ensure at least one method is provided
 if not args.organization and not args.scope_file:
     parser.error("You must provide either -o/--organization or -s/--scope-file.")
+# Only allow Sublist3r to run when using a scope file
+if args.sublister and not args.scope_file:
+    parser.error("Subdomain search is only available when providing a scope file with -s/--scope_file")
 
 # Fetch JSON data from crt.sh
 def fetch_domains(organization):
@@ -94,8 +100,8 @@ def verify_domains_parallel(domains, org_name, verbose=False):
 
     return [domain for domain in results if domain]  # Remove None values
 
-# Load scope file if provided
-def load_scope_file(scope_file):
+# Read from scope file if provided
+def read_scope_file(scope_file):
     try:
         with open(scope_file, "r") as file:
             return {line.strip().lower() for line in file if line.strip()}
@@ -103,10 +109,49 @@ def load_scope_file(scope_file):
         print(f"❌ Failed to read scope file: {e}")
         return set()
 
+def run_sublister(verified_domains):
+    all_subdomains = []
+
+    print("\n🔍 Running Sublist3r on provided domains...")
+
+    for domain in verified_domains:
+        print(f"🔹 Searching subdomains for: {domain}")
+
+        try:
+            # Run Sublist3r using the same Python executable
+            result = subprocess.run(
+                [sys.executable, "Sublist3r/sublist3r.py", "-d", domain],
+                capture_output=True,
+                text=True
+            )
+            # Extract subdomains from the output
+            output = result.stdout.strip().split("\n")
+            subdomains = [line for line in output if "." in line and " " not in line and not line.startswith("[!]")]
+
+            all_subdomains.extend(subdomains)
+
+            if args.verbose:
+                print(f"🔹 Subdomains for {domain}:")
+                for subdomain in subdomains:
+                    print(f"- {subdomain}")
+
+        except Exception as e:
+            print(f"❌ Error running Sublist3r for {domain}: {e}")
+
+    print(f"\n✅ Found a total of {len(all_subdomains)} subdomains.")
+    return all_subdomains
+
+
 # Main execution
 if args.scope_file:
     print("\n📂 Using provided scope file.")
-    verified_domains = load_scope_file(args.scope_file)
+    scope_domains = read_scope_file(args.scope_file)
+
+    # Run Sublist3r only if the argument is provided
+    if args.sublister:
+        print("\n📂🔍 Using provided scope file and running Sublist3r to find subdomains.")
+        discovered_subdomains = run_sublister(scope_domains)
+
 else:
     data = fetch_domains(args.organization)
 
@@ -120,6 +165,7 @@ else:
         print(f"\n✅ Verified {len(verified_domains)}/{len(apex_domains)} domains belonging to '{args.organization}'.")
 
 # Print final verified domains
-print(f"\n✅ Final verified domains ({len(verified_domains)} total):")
-for domain in verified_domains:
-    print(f"  - {domain}")
+if args.organization:
+    print(f"\n✅ Final verified domains ({len(verified_domains)} total):")
+    for domain in verified_domains:
+        print(f"  - {domain}")
