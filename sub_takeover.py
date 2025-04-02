@@ -7,6 +7,7 @@ import time
 import concurrent.futures
 import subprocess
 import sys
+import dns.resolver
 from pyfiglet import Figlet
 
 # Fancy title
@@ -142,15 +143,151 @@ def run_sublister(verified_domains):
     return all_subdomains
 
 
+# Patterns for potentially vulnerable cnames
+VULN_CNAME_PATTERNS = [
+    "s3.amazonaws.com",
+    "s3-website-us-east-1.amazonaws.com",
+    "storage.googleapis.com",
+    "blob.core.windows.net",
+    "cloudfront.net",
+    "herokudns.com",
+    "herokussl.com",
+    "ghs.googlehosted.com",
+    "github.io",
+    "pages.github.com",
+    "netlify.com",
+    "netlify.app",
+    "render.com",
+    "surge.sh",
+    "pantheonsite.io",
+    "fastly.net",
+    "cdn.shopify.com",
+    "myshopify.com",
+    "c.storage.googleapis.com",
+    "bigcartel.com",
+    "readme.io",
+    "zendesk.com",
+    "desk.com",
+    "helpscoutdocs.com",
+    "hubspot.net",
+    "marketo.com",
+    "unbouncepages.com",
+    "square.site",
+    "shopify.com",
+    "bigcommerce.com",
+    "wordpress.com",
+    "wixdns.net",
+    "weebly.com",
+    "strikinglydns.com"
+]
+# Error signatures to look for in http responses
+ERROR_SIGNATURES = [
+    "no such app",  
+    "the specified bucket does not exist",  
+    "there isn't a github pages site here",  
+    "404 not found",  
+    "this site can’t be reached",  
+    "there is no app configured at this hostname",  
+    "please renew your subscription",  
+    "project not found",  
+    "repository not found",  
+    "error 1001: dns resolution error",  
+    "this page is reserved for future use",  
+    "the site you are looking for could not be found",  
+    "forbidden - bucket not found",  
+    "the requested url was not found on this server",  
+    "the page you are looking for doesn't exist",  
+    "not found - error 404",  
+    "error: the page you are looking for does not exist",  
+    "sorry, we couldn't find that page",  
+    "unrecognized domain",  
+    "your connection is not private",  
+    "this account has been suspended",  
+    "the feed has not been found",  
+    "oops! we couldn’t find your site",  
+    "oops, something went wrong",  
+    "unknown domain",  
+    "no application was found for this domain",  
+    "site not found",  
+    "domain is not configured",  
+    "this domain is not connected to a site",  
+    "there isn't a web site configured at this address"
+]
+
+
+def get_cname(subdomain):
+    resolver = dns.resolver.Resolver()
+    resolver.nameservers = ["8.8.8.8", "1.1.1.1"] # Use Google's and Cloudflares's DNS
+
+    try:
+        answers = resolver.resolve(subdomain, 'CNAME')
+        for rdata in answers:
+            return str(rdata.target).rstrip('.')
+    except dns.resolver.NXDOMAIN:
+        return "NXDOMAIN"
+    except dns.resolver.NoAnswer:
+        try:
+            # Fallback to checking A records
+            answers = resolver.resolve(subdomain, 'A')
+            return "A_RECORD_FOUND"
+        except:
+            return None
+    except dns.exception.Timeout:
+        return None
+    except dns.resolver.NoNameservers:
+        print(f"\n❌ No nameservers could resolve {subdomain}. Skipping...")
+        return None
+    
+def check_takeover_risk(subdomain, cname):
+    if cname:
+        for pattern in VULN_CNAME_PATTERNS:
+            if pattern in cname:
+                print(f"⚠️ Possible takeover risk: {subdomain} → {cname}")
+                return True
+    else:
+        return False
+
+def check_http_responses(subdomain):
+    url = f"http://{subdomain}/"
+    try:
+        response = requests.get(url, timeout=5)
+        response_text = response.text.lower()
+
+        if response.status_code in [404, 403]:
+            print(f"HTTP {response.status_code} detected on {subdomain} - Possible Takeover.")
+            
+        for sign in ERROR_SIGNATURES:
+            if sign in response_text:
+                print(f"Possible takeover on: {subdomain}, Error Signature found: {sign}")
+                return True
+    except requests.exceptions.RequestException:
+        pass
+    return False
+
+
 # Main execution
 if args.scope_file:
-    print("\n📂 Using provided scope file.")
     scope_domains = read_scope_file(args.scope_file)
 
     # Run Sublist3r only if the argument is provided
     if args.sublister:
         print("\n📂🔍 Using provided scope file and running Sublist3r to find subdomains.")
         discovered_subdomains = run_sublister(scope_domains)
+
+        # After finding subdomains, check for takeovers
+        if discovered_subdomains:
+            print("\n🔄 Checking subdomains for potential takeovers...\n")
+
+            for subdomain in discovered_subdomains:
+                cname = get_cname(subdomain)
+
+                if cname == "NXDOMAIN":
+                    print(f"⚠️ {subdomain} does not exist. (NXDOMAIN)")
+                elif cname and check_takeover_risk(subdomain, cname):
+                    print(f"🔍 Verifying takeover possibility for: {subdomain} → {cname}")
+                    check_http_responses(subdomain)
+        else:
+            print("\n❌ No subdomains to check..")
 
 else:
     data = fetch_domains(args.organization)
