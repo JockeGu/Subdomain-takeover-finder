@@ -4,6 +4,7 @@ import tldextract
 import urllib.parse
 import whois
 import time
+import json
 import concurrent.futures
 import subprocess
 import sys
@@ -20,6 +21,7 @@ parser.add_argument("-o", "--organization", help="The organization name to query
 parser.add_argument("-s", "--scope-file", help="Path to a file containing pre-verified domains (one per line).", required=False)
 parser.add_argument("-v", "--verbose", help="Enable detailed WHOIS output.", action="store_true")
 parser.add_argument("-S", "--sublister", help="Enable subdomain search with Sublist3r", action="store_true")
+parser.add_argument("-j", "--json-output", help="Enable output saved to json file (-j/--json-output 'FILENAME')", required=False, metavar="FILENAME", type=str)
 args = parser.parse_args()
 
 # Ensure at least one method is provided
@@ -178,7 +180,22 @@ VULN_CNAME_PATTERNS = [
     "wordpress.com",
     "wixdns.net",
     "weebly.com",
-    "strikinglydns.com"
+    "strikinglydns.com",
+    "custom.bnc.lt",
+    "cname.vercel-dns.com",
+    "awsdns-xx.org",  # Some AWS-hosted resources left misconfigured
+    "azurefd.net",  # Azure Front Door
+    "trafficmanager.net",  # Azure Traffic Manager
+    "amazonaws.com",  # Wildcard catch in case of typoed buckets
+    "sites.shopify.com",
+    "domains.tumblr.com",
+    "proposify.com",
+    "wishpond.com",
+    "bitbucket.io",
+    "launchrock.com",
+    "instapage.com",
+    "webflow.io",
+    "ghost.io",
 ]
 # Error signatures to look for in http responses
 ERROR_SIGNATURES = [
@@ -211,9 +228,23 @@ ERROR_SIGNATURES = [
     "site not found",  
     "domain is not configured",  
     "this domain is not connected to a site",  
-    "there isn't a web site configured at this address"
+    "there isn't a web site configured at this address",
+    "sorry, this shop is currently unavailable",
+    "this site is no longer available",
+    "no such bucket",
+    "not configured for this domain",
+    "your domain isn't pointing to a site",
+    "app not found",
+    "domain has not been added to this project",
+    "this domain is not verified",
+    "the thing you're looking for isn't here",
+    "page not configured",
+    "invalid host",
+    "there is nothing here",
+    "invalid request",
+    "404 error",
+    "no such site at",
 ]
-
 
 def get_cname(subdomain):
     resolver = dns.resolver.Resolver()
@@ -248,20 +279,19 @@ def check_takeover_risk(subdomain, cname):
         return False
 
 def check_http_responses(subdomain):
-    url = f"http://{subdomain}/"
-    try:
-        response = requests.get(url, timeout=5)
-        response_text = response.text.lower()
-
-        if response.status_code in [404, 403]:
-            print(f"HTTP {response.status_code} detected on {subdomain} - Possible Takeover.")
-            
-        for sign in ERROR_SIGNATURES:
-            if sign in response_text:
-                print(f"Possible takeover on: {subdomain}, Error Signature found: {sign}")
+    urls = [f"http://{subdomain}/", f"https://{subdomain}/"]
+    for url in urls:
+        try:
+            response = requests.get(url, timeout=5)
+            if response.status_code in [404, 403]:
+                print(f"HTTP {response.status_code} detected on {url} - Possible Takeover.")
                 return True
-    except requests.exceptions.RequestException:
-        pass
+            for sign in ERROR_SIGNATURES:
+                if sign in response.text.lower():
+                    print(f"❗Possible takeover on: {url}, Signature: {sign}")
+                    return True
+        except requests.exceptions.RequestException:
+            pass
     return False
 
 
@@ -275,6 +305,7 @@ if args.scope_file:
         discovered_subdomains = run_sublister(scope_domains)
 
         # After finding subdomains, check for takeovers
+        takeover_findings = []
         if discovered_subdomains:
             print("\n🔄 Checking subdomains for potential takeovers...\n")
 
@@ -285,7 +316,35 @@ if args.scope_file:
                     print(f"⚠️ {subdomain} does not exist. (NXDOMAIN)")
                 elif cname and check_takeover_risk(subdomain, cname):
                     print(f"🔍 Verifying takeover possibility for: {subdomain} → {cname}")
-                    check_http_responses(subdomain)
+
+                    http_risk = check_http_responses(subdomain)
+                    
+                    # Append takeover findings to a list
+                    if args.json_output:
+                        if http_risk:
+                            takeover_findings.append({
+                                "subdomain": subdomain,
+                                "cname": cname,
+                                "source": "CNAME + HTTP",
+                                "note": "Potential takeover detected"
+                            })
+                        else:
+                            takeover_findings.append({
+                                "subdomain": subdomain,
+                                "cname": cname,
+                                "source": "CNAME only",
+                                "note": "CNAME pattern matchen a vulnerable service"
+                            })
+
+        # Save all detected possiblities for takeover to json file
+        if args.json_output:
+            if takeover_findings:
+                print(f"\n💾 Detected {len(takeover_findings)} potential takeovers, saved to your json file..")
+                with open(args.json_output, 'w') as f:
+                    json.dump(takeover_findings, f, indent=4)
+            else:
+                print("\n❌ No potential takeovers detected.")
+
         else:
             print("\n❌ No subdomains to check..")
 
