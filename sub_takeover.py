@@ -5,6 +5,7 @@ import urllib.parse
 import whois
 import time
 import json
+import csv
 import concurrent.futures
 import subprocess
 import sys
@@ -22,6 +23,7 @@ parser.add_argument("-s", "--scope-file", help="Path to a file containing pre-ve
 parser.add_argument("-v", "--verbose", help="Enable detailed WHOIS output.", action="store_true")
 parser.add_argument("-S", "--sublister", help="Enable subdomain search with Sublist3r", action="store_true")
 parser.add_argument("-j", "--json-output", help="Enable output saved to json file (-j/--json-output 'FILENAME')", required=False, metavar="FILENAME", type=str)
+parser.add_argument("-c", "--csv-output", help="Enable output saved to csv file (-c/--csv-output 'FILENAME')", required=False, metavar="FILENAME", type=str)
 args = parser.parse_args()
 
 # Ensure at least one method is provided
@@ -30,6 +32,11 @@ if not args.organization and not args.scope_file:
 # Only allow Sublist3r to run when using a scope file
 if args.sublister and not args.scope_file:
     parser.error("Subdomain search is only available when providing a scope file with -s/--scope_file")
+# Add extensions to filenames if not specified
+if args.json_output and not args.json_output.endswith(".json"):
+    args.json_output += ".json"
+if args.csv_output and not args.csv_output.endswith(".csv"):
+    args.csv_output += ".csv"
 
 # Fetch JSON data from crt.sh
 def fetch_domains(organization):
@@ -48,7 +55,7 @@ def fetch_domains(organization):
             print(f"❌ Failed to fetch data. HTTP {response.status_code}. Retrying in 10 seconds.. ({current_retries}/{retries})")
             time.sleep(10)
 
-    print(f"❌ Failed to fetch data after {retries} retries.. HTTP {response.status_code}")
+    print(f"❌💀 Failed to fetch data after {retries} retries.. HTTP {response.status_code}")
     return None
 
 # Extract unique apex domains
@@ -94,7 +101,7 @@ def whois_lookup(domain, org_name, verbose=False):
         if verbose:
             print(f"❌ WHOIS lookup failed for {domain}: {e}")
 
-    return None  # Return nothing if not verified
+    return None  # Don't return if not verified
 
 # Parallel WHOIS verification
 def verify_domains_parallel(domains, org_name, verbose=False):
@@ -103,13 +110,13 @@ def verify_domains_parallel(domains, org_name, verbose=False):
 
     return [domain for domain in results if domain]  # Remove None values
 
-# Read from scope file if provided
+# Read from scope file if one is provided
 def read_scope_file(scope_file):
     try:
         with open(scope_file, "r") as file:
             return {line.strip().lower() for line in file if line.strip()}
     except Exception as e:
-        print(f"❌ Failed to read scope file: {e}")
+        print(f"❌💀 Failed to read scope file: {e}")
         return set()
 
 def run_sublister(verified_domains):
@@ -121,9 +128,9 @@ def run_sublister(verified_domains):
         print(f"🔹 Searching subdomains for: {domain}")
 
         try:
-            # Run Sublist3r using the same Python executable
+            # Run Sublist3r, (Change path if needed)
             result = subprocess.run(
-                [sys.executable, "Sublist3r/sublist3r.py", "-d", domain],
+                [sys.executable, "Sublist3r\sublist3r.py", "-d", domain],
                 capture_output=True,
                 text=True
             )
@@ -139,7 +146,7 @@ def run_sublister(verified_domains):
                     print(f"- {subdomain}")
 
         except Exception as e:
-            print(f"❌ Error running Sublist3r for {domain}: {e}")
+            print(f"❌💀 Error running Sublist3r for {domain}: {e}")
 
     print(f"\n✅ Found a total of {len(all_subdomains)} subdomains.")
     return all_subdomains
@@ -197,7 +204,7 @@ VULN_CNAME_PATTERNS = [
     "webflow.io",
     "ghost.io",
 ]
-# Error signatures to look for in http responses
+# Error signatures to check for in http responses
 ERROR_SIGNATURES = [
     "no such app",  
     "the specified bucket does not exist",  
@@ -273,7 +280,7 @@ def check_takeover_risk(subdomain, cname):
     if cname:
         for pattern in VULN_CNAME_PATTERNS:
             if pattern in cname:
-                print(f"⚠️ Possible takeover risk: {subdomain} → {cname}")
+                print(f"⚠️  Possible takeover risk: {subdomain} → {cname}")
                 return True
     else:
         return False
@@ -299,33 +306,33 @@ def check_http_responses(subdomain):
 if args.scope_file:
     scope_domains = read_scope_file(args.scope_file)
 
-    # Run Sublist3r only if the argument is provided
+    # Run Sublist3r
     if args.sublister:
-        print("\n📂🔍 Using provided scope file and running Sublist3r to find subdomains.")
+        print("\n📂 Using provided scope file and running Sublist3r to find subdomains.")
         discovered_subdomains = run_sublister(scope_domains)
 
-        # After finding subdomains, check for takeovers
+        # Check for takeovers
         takeover_findings = []
         if discovered_subdomains:
-            print("\n🔄 Checking subdomains for potential takeovers...\n")
+            print("\nChecking subdomains for potential takeovers...\n")
 
             for subdomain in discovered_subdomains:
                 cname = get_cname(subdomain)
 
                 if cname == "NXDOMAIN":
-                    print(f"⚠️ {subdomain} does not exist. (NXDOMAIN)")
+                    print(f"⚠️  {subdomain} does not exist. (NXDOMAIN)")
                 elif cname and check_takeover_risk(subdomain, cname):
                     print(f"🔍 Verifying takeover possibility for: {subdomain} → {cname}")
 
                     http_risk = check_http_responses(subdomain)
                     
-                    # Append takeover findings to a list
-                    if args.json_output:
+                    # Add findings to a list if json or csv options are enabled
+                    if args.json_output or args.csv_output:
                         if http_risk:
                             takeover_findings.append({
                                 "subdomain": subdomain,
                                 "cname": cname,
-                                "source": "CNAME + HTTP",
+                                "source": "CNAME + HTTP Status",
                                 "note": "Potential takeover detected"
                             })
                         else:
@@ -336,17 +343,31 @@ if args.scope_file:
                                 "note": "CNAME pattern matchen a vulnerable service"
                             })
 
-        # Save all detected possiblities for takeover to json file
+        # Save detections to a JSON file if the option is enabled
         if args.json_output:
             if takeover_findings:
-                print(f"\n💾 Detected {len(takeover_findings)} potential takeovers, saved to your json file..")
-                with open(args.json_output, 'w') as f:
-                    json.dump(takeover_findings, f, indent=4)
+                print(f"\n👀 Detected {len(takeover_findings)} potential takeovers, 💾 saved to {args.json_output}..")
+                with open(args.json_output, 'w') as jsonfile:
+                    json.dump(takeover_findings, jsonfile, indent=4)
             else:
-                print("\n❌ No potential takeovers detected.")
-
+                print(f"\n❌💀 Finding list is empty.")
         else:
-            print("\n❌ No subdomains to check..")
+            False
+
+        # Save detections to a CSV file if the option is enabled
+        if args.csv_output:
+            if takeover_findings:
+                print(f"\n👀 Detected {len(takeover_findings)} potential takeovers, 💾 saved to {args.csv_output}..")
+                with open(args.csv_output, 'w', newline='') as csvfile:
+                    fieldnames = ["subdomain", "cname", "source", "note"]
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writeheader()
+                    for row in takeover_findings:
+                        writer.writerow(row)
+            else:
+                print(f"\n❌💀 Finding list is empty.")
+        else:
+            False
 
 else:
     data = fetch_domains(args.organization)
