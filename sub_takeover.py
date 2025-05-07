@@ -105,10 +105,10 @@ def whois_lookup(domain, org_name, verbose=False):
 
 # Parallel WHOIS verification
 def verify_domains_parallel(domains, org_name, verbose=False):
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor: # Max workers can be changed, however over 5 the script seems to work poorly
         results = list(executor.map(lambda domain: whois_lookup(domain, org_name, verbose), domains))
 
-    return [domain for domain in results if domain]  # Remove None values
+    return [domain for domain in results if domain]  # Remove 'None' values
 
 # Read from scope file if one is provided
 def read_scope_file(scope_file):
@@ -128,13 +128,13 @@ def run_sublister(verified_domains):
         print(f"🔹 Searching subdomains for: {domain}")
 
         try:
-            # Run Sublist3r, (Change path if needed)
+            # Run Sublist3r
             result = subprocess.run(
-                [sys.executable, "Sublist3r\sublist3r.py", "-d", domain],
+                [sys.executable, "Sublist3r\sublist3r.py", "-d", domain], # Change path if needed, depending on where it is installed
                 capture_output=True,
                 text=True
             )
-            # Extract subdomains from the output
+            # Extract subdomains from Sublist3r's output
             output = result.stdout.strip().split("\n")
             subdomains = [line for line in output if "." in line and " " not in line and not line.startswith("[!]")]
 
@@ -275,7 +275,8 @@ def get_cname(subdomain):
     except dns.resolver.NoNameservers:
         print(f"\n❌ No nameservers could resolve {subdomain}. Skipping...")
         return None
-    
+
+# Check if CNAME matches anything in VULN_CNAME_PATTERNS 
 def check_takeover_risk(subdomain, cname):
     if cname:
         for pattern in VULN_CNAME_PATTERNS:
@@ -293,6 +294,7 @@ def check_http_responses(subdomain):
             if response.status_code in [404, 403]:
                 print(f"HTTP {response.status_code} detected on {url} - Possible Takeover.")
                 return True
+            # Check is error message in response matches anything in ERROR_SIGNATURES
             for sign in ERROR_SIGNATURES:
                 if sign in response.text.lower():
                     print(f"❗Possible takeover on: {url}, Signature: {sign}")
@@ -343,7 +345,7 @@ if args.scope_file:
                                 "note": "CNAME pattern matchen a vulnerable service"
                             })
 
-        # Save detections to a JSON file if the option is enabled
+        # Save detected findings to a JSON file if the option is enabled
         if args.json_output:
             if takeover_findings:
                 print(f"\n👀 Detected {len(takeover_findings)} potential takeovers, 💾 saved to {args.json_output}..")
@@ -354,7 +356,7 @@ if args.scope_file:
         else:
             False
 
-        # Save detections to a CSV file if the option is enabled
+        # Save detected findings to a CSV file if the option is enabled
         if args.csv_output:
             if takeover_findings:
                 print(f"\n👀 Detected {len(takeover_findings)} potential takeovers, 💾 saved to {args.csv_output}..")
