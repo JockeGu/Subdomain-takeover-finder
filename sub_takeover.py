@@ -130,7 +130,7 @@ def run_sublister(verified_domains):
         try:
             # Run Sublist3r
             result = subprocess.run(
-                [sys.executable, "Sublist3r\sublist3r.py", "-d", domain], # Change path if needed, depending on where it is installed
+                [sys.executable, "Sublist3r/sublist3r.py", "-d", domain], # Change path if needed, depending on where it is installed
                 capture_output=True,
                 text=True
             )
@@ -152,7 +152,30 @@ def run_sublister(verified_domains):
     return all_subdomains
 
 
-# Patterns for potentially vulnerable cnames
+def get_cname(subdomain):
+    resolver = dns.resolver.Resolver()
+    resolver.nameservers = ["8.8.8.8", "1.1.1.1"] # Use Google's and Cloudflares's DNS
+
+    try:
+        answers = resolver.resolve(subdomain, 'CNAME')
+        for rdata in answers:
+            return str(rdata.target).rstrip('.')
+    except dns.resolver.NXDOMAIN:
+        return "NXDOMAIN"
+    except dns.resolver.NoAnswer:
+        try:
+            # Fallback to checking A records
+            answers = resolver.resolve(subdomain, 'A')
+            return "A_RECORD_FOUND"
+        except:
+            return None
+    except dns.exception.Timeout:
+        return None
+    except dns.resolver.NoNameservers:
+        print(f"\n❌ No nameservers could resolve {subdomain}. Skipping...")
+        return None
+
+# Patterns for potentially vulnerable cnames (currently 50 in list)
 VULN_CNAME_PATTERNS = [
     "s3.amazonaws.com",
     "s3-website-us-east-1.amazonaws.com",
@@ -193,7 +216,7 @@ VULN_CNAME_PATTERNS = [
     "awsdns-xx.org",  # Some AWS-hosted resources left misconfigured
     "azurefd.net",  # Azure Front Door
     "trafficmanager.net",  # Azure Traffic Manager
-    "amazonaws.com",  # Wildcard catch in case of typoed buckets
+    "amazonaws.com",
     "sites.shopify.com",
     "domains.tumblr.com",
     "proposify.com",
@@ -204,7 +227,7 @@ VULN_CNAME_PATTERNS = [
     "webflow.io",
     "ghost.io",
 ]
-# Error signatures to check for in http responses
+# Error signatures to check for in http responses (currently 44 in list)
 ERROR_SIGNATURES = [
     "no such app",  
     "the specified bucket does not exist",  
@@ -253,29 +276,6 @@ ERROR_SIGNATURES = [
     "no such site at",
 ]
 
-def get_cname(subdomain):
-    resolver = dns.resolver.Resolver()
-    resolver.nameservers = ["8.8.8.8", "1.1.1.1"] # Use Google's and Cloudflares's DNS
-
-    try:
-        answers = resolver.resolve(subdomain, 'CNAME')
-        for rdata in answers:
-            return str(rdata.target).rstrip('.')
-    except dns.resolver.NXDOMAIN:
-        return "NXDOMAIN"
-    except dns.resolver.NoAnswer:
-        try:
-            # Fallback to checking A records
-            answers = resolver.resolve(subdomain, 'A')
-            return "A_RECORD_FOUND"
-        except:
-            return None
-    except dns.exception.Timeout:
-        return None
-    except dns.resolver.NoNameservers:
-        print(f"\n❌ No nameservers could resolve {subdomain}. Skipping...")
-        return None
-
 # Check if CNAME matches anything in VULN_CNAME_PATTERNS 
 def check_takeover_risk(subdomain, cname):
     if cname:
@@ -286,6 +286,7 @@ def check_takeover_risk(subdomain, cname):
     else:
         return False
 
+# Check if HTTP response returns status 404 or 403
 def check_http_responses(subdomain):
     urls = [f"http://{subdomain}/", f"https://{subdomain}/"]
     for url in urls:
@@ -294,7 +295,7 @@ def check_http_responses(subdomain):
             if response.status_code in [404, 403]:
                 print(f"HTTP {response.status_code} detected on {url} - Possible Takeover.")
                 return True
-            # Check is error message in response matches anything in ERROR_SIGNATURES
+            # Check if there is any error message in response that matches anything in ERROR_SIGNATURES
             for sign in ERROR_SIGNATURES:
                 if sign in response.text.lower():
                     print(f"❗Possible takeover on: {url}, Signature: {sign}")
@@ -348,7 +349,7 @@ if args.scope_file:
         # Save detected findings to a JSON file if the option is enabled
         if args.json_output:
             if takeover_findings:
-                print(f"\n👀 Detected {len(takeover_findings)} potential takeovers, 💾 saved to {args.json_output}..")
+                print(f"\n👀 Detected {len(takeover_findings)} potential takeovers or vulnerable CNAMEs, 💾 saved results to {args.json_output}..")
                 with open(args.json_output, 'w') as jsonfile:
                     json.dump(takeover_findings, jsonfile, indent=4)
             else:
@@ -385,6 +386,5 @@ else:
 
 # Print final verified domains
 if args.organization:
-    print(f"\n✅ Final verified domains ({len(verified_domains)} total):")
     for domain in verified_domains:
-        print(f"  - {domain}")
+        print(f"{domain}")
