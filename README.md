@@ -25,14 +25,16 @@ python sub_takeover.py -o "Organization Name"
 python sub_takeover.py -s scope.txt -S
 ```
 
-Command Line Options
-Argument	Description
--o, --organization	Query crt.sh for organization name
--s, --scope-file	Use custom domain scope from a .txt file
--S, --sublister	Run Sublist3r subdomain discovery (only valid when also using -s)
--v, --verbose	Print verbose WHOIS output
--j, --json-output	Save results to JSON file (e.g. results.json)
--c, --csv-output	Save results to CSV file (e.g. results.csv)
+## ⚙️ Command Line Options
+| Argument               | Description                                                |
+| ---------------------- | ---------------------------------------------------------- |
+| `-o`, `--organization` | Query crt.sh for organization name                         |
+| `-s`, `--scope-file`   | Use custom domain scope from a `.txt` file                 |
+| `-S`, `--sublister`    | Run Sublist3r subdomain discovery *(only valid with `-s`)* |
+| `-v`, `--verbose`      | Print verbose output (WHOIS info, subdomains, etc.)        |
+| `-j`, `--json-output`  | Save results to JSON file (e.g. `results.json`)            |
+| `-c`, `--csv-output`   | Save results to CSV file (e.g. `results.csv`)              |
+
 
 ## 🧪 Example
 ```bash
