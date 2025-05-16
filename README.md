@@ -44,15 +44,11 @@ python sub_takeover.py -s scope.txt -S -v -j findings.json -c findings.csv
 ## 📦 Requirements
 Python 3.x and the following libraries:
 
--requests
-
--tldextract
-
--whois
-
--dnspython
-
--pyfiglet
+- requests
+- tldextract
+- whois
+- dnspython
+- pyfiglet
 
 You can install them via:
 
@@ -62,7 +58,8 @@ pip install -r requirements.txt
 
 ⚠️ Note: Sublist3r must be cloned and available in the same directory or correctly referenced in the script.
 
-##❓ What is a Subdomain Takeover?
+## ❓ What is a Subdomain Takeover?
+
 A subdomain takeover occurs when a subdomain (like shop.example.com) points to a third-party service (e.g., GitHub Pages, AWS S3, Netlify) that is no longer in use. If the DNS record still exists but the service is unclaimed, an attacker may register it and hijack the subdomain.
 
 This tool identifies such DNS misconfigurations and provides indicators of possible takeover risks.
@@ -70,13 +67,13 @@ This tool identifies such DNS misconfigurations and provides indicators of possi
 ## 📄 Output
 Each detected risk is saved with the following structure:
 
--subdomain – the affected subdomain
+- subdomain – the affected subdomain
 
--cname – the CNAME value or pointer
+- cname – the CNAME value or pointer
 
--source – method of detection (CNAME only, CNAME + HTTP Status, etc.)
+- source – method of detection (CNAME only, CNAME + HTTP Status, etc.)
 
--note – short description
+- note – short description
 
 ## ✅ Example Output (JSON)
 ````json
